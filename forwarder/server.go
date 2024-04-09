@@ -2,11 +2,11 @@ package forwarder
 
 import (
 	"context"
-	"log"
 	"net"
 
 	"github.com/pkg/errors"
 	"github.com/sagernet/sing/common/cache"
+	"github.com/charmbracelet/log"
 )
 
 type Server struct {
@@ -14,14 +14,21 @@ type Server struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	logger *log.Logger
 }
 
-func NewServer(ctx context.Context, destination *net.UDPAddr) *Server {
+func NewServer(ctx context.Context, destination *net.UDPAddr, logger *log.Logger) *Server {
+	if logger == nil {
+		logger = log.Default()
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	return &Server{
 		destination: destination,
 		ctx:         ctx,
 		cancel:      cancel,
+		logger:      logger,
 	}
 }
 
@@ -50,7 +57,7 @@ func (s *Server) Handle(relayConn DatagramConn) error {
 		if err != nil {
 			return errors.Wrap(err, "server error when receiving from relay")
 		}
-		log.Printf("server received %d bytes from relay", len(data))
+		s.logger.Debugf("server received %d bytes from relay", len(data))
 
 		p := MultiplexDatagram(data)
 		if p.IsInvalid() {
@@ -61,7 +68,7 @@ func (s *Server) Handle(relayConn DatagramConn) error {
 		conn, _ := idToConn.LoadOrStore(channelID, func() *net.UDPConn {
 			ln, err := net.ListenUDP("udp", nil)
 			if err != nil {
-				log.Printf("server error when dialing udp: %v", err)
+				s.logger.Warnf("server error when dialing udp: %v", err)
 			}
 
 			// handle incoming datagrams from destination
@@ -77,14 +84,14 @@ func (s *Server) Handle(relayConn DatagramConn) error {
 					}
 					n, addr, err := ln.ReadFromUDP(buf)
 					if err != nil {
-						log.Printf("server error when reading from udp: %v", err)
+						s.logger.Warnf("server error when reading from udp: %v", err)
 						return
 					}
-					log.Printf("server received %d bytes from %s", n, addr)
+					s.logger.Debugf("server received %d bytes from %s", n, addr)
 
 					p := NewMultiplexDatagram(channelID, buf[:n])
 					if err := p.SendTo(relayConn); err != nil {
-						log.Printf("server error when sending to relay: %v", err)
+						s.logger.Warnf("server error when sending to relay: %v", err)
 						return
 					}
 				}
@@ -97,10 +104,7 @@ func (s *Server) Handle(relayConn DatagramConn) error {
 		if err != nil {
 			return errors.Wrap(err, "server error when writing to udp")
 		}
-		if n != len(p.Data()) {
-			log.Printf("server short write: %d/%d", n, len(p.Data()))
-		}
-		log.Printf("server sent %d bytes to %s", n, s.destination)
+		s.logger.Debugf("server sent %d bytes to %s", n, s.destination)
 	}
 }
 

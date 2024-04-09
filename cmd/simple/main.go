@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
-	"log"
 	"net"
 	"sync"
 
 	"github.com/PeronGH/datagram-forwarder/forwarder"
+	"github.com/charmbracelet/log"
 )
 
 func main() {
+	log.SetLevel(log.DebugLevel)
+
 	clientConn1, remoteConn1, close1 := forwarder.DatagramConnPipe()
 	clientConn2, remoteConn2, close2 := forwarder.DatagramConnPipe()
 	defer close1()
@@ -33,14 +35,14 @@ func main() {
 	go func() {
 		defer wg.Done()
 		// server
-		server := forwarder.NewServer(context.Background(), &net.UDPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 53})
+		server := forwarder.NewServer(context.Background(), &net.UDPAddr{IP: net.IPv4(1, 1, 1, 1), Port: 53}, nil)
 		defer server.Close()
 
 		go server.Handle(remoteConn1)
 		go server.Handle(remoteConn2)
 
 		server.Wait()
-		log.Println("server closed")
+		log.Info("server closed")
 	}()
 
 	wg.Wait()
@@ -49,11 +51,11 @@ func main() {
 func client(name string, replayConn forwarder.DatagramConn) {
 	ln, err := net.ListenUDP("udp", nil)
 	if err != nil {
-		log.Printf("%s: error: %v", name, err)
+		log.Errorf("%s: error: %v", name, err)
 		return
 	}
 	defer ln.Close()
-	log.Printf("%s: listen on %s", name, ln.LocalAddr())
+	log.Infof("%s: listen on %s", name, ln.LocalAddr())
 
 	err = forwarder.RunClient(forwarder.ClientConfig{
 		Ctx:       context.Background(),
@@ -61,7 +63,7 @@ func client(name string, replayConn forwarder.DatagramConn) {
 		Listener:  ln,
 	})
 	if err != nil {
-		log.Printf("%s: error: %v", name, err)
+		log.Errorf("%s: error: %v", name, err)
 		return
 	}
 }

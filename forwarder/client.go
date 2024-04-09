@@ -2,21 +2,34 @@ package forwarder
 
 import (
 	"context"
-	"log"
 	"net"
 
 	"github.com/pkg/errors"
 	"github.com/sagernet/sing/common/cache"
 	"github.com/sagernet/sing/common/task"
+	"github.com/charmbracelet/log"
 )
 
 type ClientConfig struct {
 	Ctx       context.Context
 	RelayConn DatagramConn
 	Listener  *net.UDPConn
+	Logger   *log.Logger
 }
 
-func RunClient(config ClientConfig) error {
+var ErrInvalidConfig = errors.New("invalid client config")
+
+func RunClient(c ClientConfig) error {
+	if c.RelayConn == nil || c.Listener == nil {
+		return ErrInvalidConfig
+	}
+	if c.Ctx == nil {
+		c.Ctx = context.Background()
+	}
+	if c.Logger == nil {
+		c.Logger = log.Default()
+	}
+
 	var group task.Group
 
 	// read from relay
@@ -32,11 +45,11 @@ func RunClient(config ClientConfig) error {
 				return nil
 			default:
 			}
-			data, err := config.RelayConn.ReceiveDatagram(ctx)
+			data, err := c.RelayConn.ReceiveDatagram(ctx)
 			if err != nil {
 				return errors.Wrap(err, "client error when receiving from relay")
 			}
-			log.Printf("client received %d bytes from relay", len(data))
+			c.Logger.Debugf("client received %d bytes from relay", len(data))
 
 			p := MultiplexDatagram(data)
 			if p.IsInvalid() {
@@ -67,19 +80,19 @@ func RunClient(config ClientConfig) error {
 				return nil
 			default:
 			}
-			n, addr, err := config.Listener.ReadFromUDP(buf)
+			n, addr, err := c.Listener.ReadFromUDP(buf)
 			if err != nil {
 				return errors.Wrap(err, "client error when reading from udp")
 			}
 			data := buf[:n]
-			log.Printf("client received %d bytes from %s", len(data), addr.String())
+			c.Logger.Debugf("client received %d bytes from %s", len(data), addr.String())
 
 			sourceAddr := addr.String()
 			channelID, _ := sourceToID.LoadOrStore(sourceAddr, func() uint32 {
 				lastID++
 				return lastID
 			})
-			err = NewMultiplexDatagram(channelID, data).SendTo(config.RelayConn)
+			err = NewMultiplexDatagram(channelID, data).SendTo(c.RelayConn)
 			if err != nil {
 				return errors.Wrap(err, "client error when sending to relay")
 			}
@@ -87,17 +100,17 @@ func RunClient(config ClientConfig) error {
 			// add reply handler
 			idToHandler.LoadOrStore(channelID, func() replyHandler {
 				return func(reply []byte) {
-					n, err := config.Listener.WriteToUDP(reply, addr)
+					n, err := c.Listener.WriteToUDP(reply, addr)
 					if err != nil {
-						log.Printf("client error when writing to udp: %v", err)
+						c.Logger.Warnf("client error when writing to udp: %v", err)
 					}
-					log.Printf("client sent %d bytes to %s", n, addr.String())
+					c.Logger.Debugf("client sent %d bytes to %s", n, addr.String())
 				}
 			})
 		}
 	})
 
-	return group.Run(config.Ctx)
+	return group.Run(c.Ctx)
 }
 
 type replyHandler func([]byte)
