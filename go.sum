@@ -1,0 +1,4 @@
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+github.com/sagernet/sing v0.3.8 h1:gm4JKalPhydMYX2zFOTnnd4TXtM/16WFRqSjMepYQQk=
+github.com/sagernet/sing v0.3.8/go.mod h1:+60H3Cm91RnL9dpVGWDPHt0zTQImO9Vfqt9a4rSambI=
