@@ -46,27 +46,6 @@ func RunClient(config ClientConfig) error {
 		}
 	})
 
-	// read from listener
-	incomingCh := make(chan inboundDatagram, UDPBacklog)
-
-	group.Append("read from listener", func(ctx context.Context) error {
-		defer close(incomingCh)
-		buf := make([]byte, UDPBufferSize)
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				n, addr, err := config.Listener.ReadFromUDP(buf)
-				if err != nil {
-					return errors.Wrap(err, "error when reading from udp")
-				}
-				log.Printf("received %d bytes from %s", n, addr)
-				incomingCh <- inboundDatagram{buf[:n], addr}
-			}
-		}
-	})
-
 	// handle incoming datagrams from listener
 	sourceToID := cache.New(
 		cache.WithAge[string, uint32](int64(UDPTimeout.Seconds())),
@@ -76,37 +55,42 @@ func RunClient(config ClientConfig) error {
 	group.Append("handle incoming datagram", func(ctx context.Context) error {
 		var lastID uint32
 
-		for datagram := range incomingCh {
-			sourceAddr := datagram.addr.String()
-			channelID, _ := sourceToID.LoadOrStore(sourceAddr, func() uint32 {
-				lastID++
-				return lastID
-			})
-			err := NewMultiplexDatagram(channelID, datagram.b).SendTo(config.RelayConn)
-			if err != nil {
-				return errors.Wrap(err, "error when sending to relay")
-			}
-
-			// add reply handler
-			idToHandler.LoadOrStore(channelID, func() replyHandler {
-				return func(reply []byte) {
-					_, err := config.Listener.WriteToUDP(reply, datagram.addr)
-					if err != nil {
-						log.Printf("error when writing to udp: %v", err)
-					}
+		buf := make([]byte, UDPBufferSize)
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				n, addr, err := config.Listener.ReadFromUDP(buf)
+				if err != nil {
+					return errors.Wrap(err, "error when reading from udp")
 				}
-			})
-		}
+				data := buf[:n]
 
-		return nil
+				sourceAddr := addr.String()
+				channelID, _ := sourceToID.LoadOrStore(sourceAddr, func() uint32 {
+					lastID++
+					return lastID
+				})
+				err = NewMultiplexDatagram(channelID, data).SendTo(config.RelayConn)
+				if err != nil {
+					return errors.Wrap(err, "error when sending to relay")
+				}
+
+				// add reply handler
+				idToHandler.LoadOrStore(channelID, func() replyHandler {
+					return func(reply []byte) {
+						_, err := config.Listener.WriteToUDP(reply, addr)
+						if err != nil {
+							log.Printf("error when writing to udp: %v", err)
+						}
+					}
+				})
+			}
+		}
 	})
 
 	return group.Run(config.Ctx)
-}
-
-type inboundDatagram struct {
-	b    []byte
-	addr *net.UDPAddr
 }
 
 type replyHandler func([]byte)
