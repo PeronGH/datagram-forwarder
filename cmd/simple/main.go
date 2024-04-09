@@ -40,6 +40,7 @@ func main() {
 		go server.Handle(remoteConn2)
 
 		server.Wait()
+		log.Println("server closed")
 	}()
 
 	wg.Wait()

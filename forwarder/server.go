@@ -12,9 +12,6 @@ import (
 type Server struct {
 	destination *net.UDPAddr
 
-	idToConn      *cache.LruCache[uint32, *net.UDPConn]
-	localAddrToID *cache.LruCache[string, uint32]
-
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -23,33 +20,35 @@ func NewServer(ctx context.Context, destination *net.UDPAddr) *Server {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Server{
 		destination: destination,
-		idToConn: cache.New(
-			cache.WithAge[uint32, *net.UDPConn](int64(UDPTimeout.Seconds())),
-			cache.WithUpdateAgeOnGet[uint32, *net.UDPConn](),
-			cache.WithEvict(func(id uint32, conn *net.UDPConn) {
-				conn.Close()
-			}),
-		),
-		localAddrToID: cache.New(
-			cache.WithAge[string, uint32](int64(UDPTimeout.Seconds())),
-			cache.WithUpdateAgeOnGet[string, uint32](),
-		),
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:         ctx,
+		cancel:      cancel,
 	}
 }
 
 func (s *Server) Close() {
 	s.cancel()
-	s.idToConn.Clear()
 }
 
 func (s *Server) Handle(relayConn DatagramConn) error {
+	idToConn := cache.New(
+		cache.WithAge[uint32, *net.UDPConn](int64(UDPTimeout.Seconds())),
+		cache.WithUpdateAgeOnGet[uint32, *net.UDPConn](),
+		cache.WithEvict(func(id uint32, conn *net.UDPConn) {
+			conn.Close()
+		}),
+	)
+	defer idToConn.Clear()
+
 	for {
+		select {
+		case <-s.ctx.Done():
+			return nil
+		default:
+		}
 		// read from relay
 		data, err := relayConn.ReceiveDatagram(s.ctx)
 		if err != nil {
-			return errors.Wrap(err, "error when receiving from relay")
+			return errors.Wrap(err, "server error when receiving from relay")
 		}
 		log.Printf("server received %d bytes from relay", len(data))
 
@@ -59,46 +58,49 @@ func (s *Server) Handle(relayConn DatagramConn) error {
 		}
 
 		channelID := p.ChannelID()
-		conn, _ := s.idToConn.LoadOrStore(channelID, func() *net.UDPConn {
-			conn, err := net.ListenUDP("udp", nil)
+		conn, _ := idToConn.LoadOrStore(channelID, func() *net.UDPConn {
+			ln, err := net.ListenUDP("udp", nil)
 			if err != nil {
-				log.Printf("error when dialing udp: %v", err)
+				log.Printf("server error when dialing udp: %v", err)
 			}
 
 			// handle incoming datagrams from destination
 			go func() {
+				defer idToConn.Delete(channelID)
+
 				buf := make([]byte, UDPBufferSize)
 				for {
 					select {
 					case <-s.ctx.Done():
 						return
 					default:
-						n, _, err := conn.ReadFromUDP(buf)
-						if err != nil {
-							log.Printf("error when reading from udp: %v", err)
-							return
-						}
+					}
+					n, addr, err := ln.ReadFromUDP(buf)
+					if err != nil {
+						log.Printf("server error when reading from udp: %v", err)
+						return
+					}
+					log.Printf("server received %d bytes from %s", n, addr)
 
-						p := NewMultiplexDatagram(channelID, buf[:n])
-						if err := p.SendTo(relayConn); err != nil {
-							log.Printf("error when sending to relay: %v", err)
-							return
-						}
+					p := NewMultiplexDatagram(channelID, buf[:n])
+					if err := p.SendTo(relayConn); err != nil {
+						log.Printf("server error when sending to relay: %v", err)
+						return
 					}
 				}
 			}()
 
-			return conn
+			return ln
 		})
 
 		n, err := conn.WriteToUDP(p.Data(), s.destination)
 		if err != nil {
-			return errors.Wrap(err, "error when writing to udp")
+			return errors.Wrap(err, "server error when writing to udp")
 		}
 		if n != len(p.Data()) {
-			log.Printf("short write: %d/%d", n, len(p.Data()))
+			log.Printf("server short write: %d/%d", n, len(p.Data()))
 		}
-		return nil
+		log.Printf("server sent %d bytes to %s", n, s.destination)
 	}
 }
 

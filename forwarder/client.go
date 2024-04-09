@@ -27,11 +27,16 @@ func RunClient(config ClientConfig) error {
 
 	group.Append("read from relay", func(ctx context.Context) error {
 		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+			}
 			data, err := config.RelayConn.ReceiveDatagram(ctx)
 			if err != nil {
-				return errors.Wrap(err, "error when receiving from relay")
+				return errors.Wrap(err, "client error when receiving from relay")
 			}
-			log.Printf("received %d bytes from relay", len(data))
+			log.Printf("client received %d bytes from relay", len(data))
 
 			p := MultiplexDatagram(data)
 			if p.IsInvalid() {
@@ -61,32 +66,34 @@ func RunClient(config ClientConfig) error {
 			case <-ctx.Done():
 				return nil
 			default:
-				n, addr, err := config.Listener.ReadFromUDP(buf)
-				if err != nil {
-					return errors.Wrap(err, "error when reading from udp")
-				}
-				data := buf[:n]
-
-				sourceAddr := addr.String()
-				channelID, _ := sourceToID.LoadOrStore(sourceAddr, func() uint32 {
-					lastID++
-					return lastID
-				})
-				err = NewMultiplexDatagram(channelID, data).SendTo(config.RelayConn)
-				if err != nil {
-					return errors.Wrap(err, "error when sending to relay")
-				}
-
-				// add reply handler
-				idToHandler.LoadOrStore(channelID, func() replyHandler {
-					return func(reply []byte) {
-						_, err := config.Listener.WriteToUDP(reply, addr)
-						if err != nil {
-							log.Printf("error when writing to udp: %v", err)
-						}
-					}
-				})
 			}
+			n, addr, err := config.Listener.ReadFromUDP(buf)
+			if err != nil {
+				return errors.Wrap(err, "client error when reading from udp")
+			}
+			data := buf[:n]
+			log.Printf("client received %d bytes from %s", len(data), addr.String())
+
+			sourceAddr := addr.String()
+			channelID, _ := sourceToID.LoadOrStore(sourceAddr, func() uint32 {
+				lastID++
+				return lastID
+			})
+			err = NewMultiplexDatagram(channelID, data).SendTo(config.RelayConn)
+			if err != nil {
+				return errors.Wrap(err, "client error when sending to relay")
+			}
+
+			// add reply handler
+			idToHandler.LoadOrStore(channelID, func() replyHandler {
+				return func(reply []byte) {
+					n, err := config.Listener.WriteToUDP(reply, addr)
+					if err != nil {
+						log.Printf("client error when writing to udp: %v", err)
+					}
+					log.Printf("client sent %d bytes to %s", n, addr.String())
+				}
+			})
 		}
 	})
 
