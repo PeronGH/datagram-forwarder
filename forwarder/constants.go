@@ -4,6 +4,6 @@ import "time"
 
 const (
 	UDPTimeout    = 5 * time.Minute
-	UDPBufferSize = 16 * 1024
+	UDPBufferSize = 8 * 1024
 	UDPBacklog    = 128
 )
