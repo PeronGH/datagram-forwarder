@@ -4,9 +4,9 @@ import (
 	"context"
 	"net"
 
+	"github.com/charmbracelet/log"
 	"github.com/pkg/errors"
 	"github.com/sagernet/sing/common/cache"
-	"github.com/charmbracelet/log"
 )
 
 type Server struct {
@@ -84,14 +84,14 @@ func (s *Server) Handle(relayConn DatagramConn) error {
 					}
 					n, addr, err := ln.ReadFromUDP(buf)
 					if err != nil {
-						s.logger.Warnf("server error when reading from udp: %v", err)
+						s.logger.Errorf("server error when reading from udp: %v", err)
 						return
 					}
 					s.logger.Debugf("server received %d bytes from %s", n, addr)
 
 					p := NewMultiplexDatagram(channelID, buf[:n])
 					if err := p.SendTo(relayConn); err != nil {
-						s.logger.Warnf("server error when sending to relay: %v", err)
+						s.logger.Errorf("server error when sending to relay: %v", err)
 						return
 					}
 				}

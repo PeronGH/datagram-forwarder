@@ -4,17 +4,17 @@ import (
 	"context"
 	"net"
 
+	"github.com/charmbracelet/log"
 	"github.com/pkg/errors"
 	"github.com/sagernet/sing/common/cache"
 	"github.com/sagernet/sing/common/task"
-	"github.com/charmbracelet/log"
 )
 
 type ClientConfig struct {
 	Ctx       context.Context
 	RelayConn DatagramConn
 	Listener  *net.UDPConn
-	Logger   *log.Logger
+	Logger    *log.Logger
 }
 
 var ErrInvalidConfig = errors.New("invalid client config")
